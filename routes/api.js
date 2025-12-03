@@ -4,7 +4,7 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const dashboardController = require('../controllers/dashboardController');
 const insightController = require('../controllers/insightController');
-const targetController = require('../controllers/targetController_TEMP'); 
+const targetController = require('../controllers/targetController'); 
 const authMiddleware = require('../middleware/authMiddleware');
 
 // Route Login
