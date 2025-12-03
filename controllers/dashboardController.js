@@ -1,54 +1,47 @@
 const supabase = require('../config/supabase');
 
 exports.getDashboardData = async (req, res) => {
-    const userId = req.user.id; // ID User Integer
+    const userId = req.user.id;
 
     try {
-        console.log(`🔄 Mengambil data manual untuk User ID: ${userId}...`);
+        console.log(`🔄 Menyiapkan data ML Features untuk User ID: ${userId}...`);
 
-        // 1. AMBIL DATA PROFIL USER
+        // 1. DATA PROFIL
         const { data: user } = await supabase
             .from('users')
-            .select('name, email, image_path')
+            .select('name, xp, image_path')
             .eq('id', userId)
             .single();
 
-        // 2. AMBIL TOTAL XP (Hitung Manual)
+        // 2. HITUNG DURASI (avg_completion_time)
         const { data: completions } = await supabase
             .from('developer_journey_completions')
-            .select(`
-                study_duration,
-                developer_journeys ( xp )
-            `)
+            .select('study_duration')
             .eq('user_id', userId);
 
-        let totalXp = 0;
         let totalDuration = 0;
-        let completedCount = 0;
-
-        // Loop pakai JavaScript (Lebih aman daripada SQL)
         if (completions) {
-            completions.forEach(item => {
-                // Ambil XP (Pastikan jadi angka)
-                const xp = item.developer_journeys?.xp || 0;
-                totalXp += Number(xp); 
-
-                // Ambil Durasi (Bersihkan kalau ada teks aneh)
-                const duration = String(item.study_duration).replace(/\D/g, ''); // Hapus huruf
-                totalDuration += Number(duration || 0);
-                
-                completedCount++;
+            completions.forEach(c => {
+                // Bersihkan data string jadi angka
+                totalDuration += Number(String(c.study_duration).replace(/\D/g, '') || 0);
             });
         }
+        const avgDuration = completions?.length > 0 ? (totalDuration / completions.length) : 0;
 
-        // 3. AMBIL DATA TRACKING (Untuk Konsistensi)
-        const { count: trackingCount } = await supabase
+        // 3. HITUNG MODUL & LOGIN (total_modules_read & login_frequency)
+        const { data: trackings } = await supabase
             .from('developer_journey_trackings')
-            .select('id', { count: 'exact', head: true })
+            .select('last_viewed')
             .eq('developer_id', userId);
 
-        // 4. AMBIL DATA UJIAN (Untuk Average Score)
-        // Kita cari ID registrasi user dulu, baru ke result
+        const totalModules = trackings?.length || 0;
+
+        // Hitung hari unik login
+        const loginDates = new Set(trackings?.map(t => new Date(t.last_viewed).toDateString()));
+        let loginFrequency = loginDates.size; 
+        if (loginFrequency === 0 && user) loginFrequency = 1; // Minimal 1
+
+        // 4. HITUNG NILAI & KEGAGALAN (avg_exam_score & failed_exams)
         const { data: examResults } = await supabase
             .from('exam_results')
             .select('score, is_passed, exam_registrations!inner(examinees_id)')
@@ -56,64 +49,67 @@ exports.getDashboardData = async (req, res) => {
 
         let totalScore = 0;
         let examCount = 0;
-        let passedCount = 0;
+        let failedExams = 0;
 
         if (examResults) {
             examResults.forEach(item => {
-                // Konversi Score ke Angka (Aman dari error)
                 const score = Number(String(item.score).replace(/\D/g, '') || 0);
                 totalScore += score;
                 examCount++;
-                if (item.is_passed == 1) passedCount++;
+                if (item.is_passed == 0) failedExams++;
             });
         }
-
-        // HITUNG RATA-RATA DI SINI (JAVASCRIPT)
         const avgScore = examCount > 0 ? (totalScore / examCount) : 0;
-        const avgDuration = completedCount > 0 ? (totalDuration / completedCount) : 0;
 
-        // 5. TENTUKAN TIPE BELAJAR (LOGIKA AI SEDERHANA)
-        let learnerType = 'Balanced Learner';
-        let motivation = 'Teruslah belajar!';
-        
-        if (avgDuration > 0 && avgDuration < 30) {
-            learnerType = 'Fast Learner';
-            motivation = 'Wow, kamu belajar sangat cepat! Jangan lupa pahami detailnya.';
-        } else if (trackingCount > 10) {
-            learnerType = 'Consistent Learner';
-            motivation = 'Konsistensimu luar biasa. Pertahankan ritme ini!';
-        } else if (avgScore > 80) {
-            learnerType = 'Reflective Learner';
-            motivation = 'Pemahamanmu sangat mendalam. Nilai ujianmu membuktikannya.';
-        }
-
-        // 6. SUSUN JSON FINAL
-        const responseData = {
-            user: {
-                name: user?.name || 'User',
-                xp: totalXp,
-                avatar: user?.image_path
-            },
-            ai_insight: {
-                type: learnerType,
-                motivation: motivation,
-                advice: examCount > 0 && avgScore < 60 ? "Coba review materi dasar lagi." : "Lanjut ke materi expert!"
-            },
-            ml_features: {
-                avg_exam_score: Math.round(avgScore),
-                total_modules_read: trackingCount || 0,
-                avg_completion_time: Math.round(avgDuration)
-            },
-            exam_history: examResults?.slice(0, 3) || [] // Ambil 3 terakhir
+        // 5. PACKING DATA UNTUK ML
+        const mlFeatures = {
+            avg_completion_time: Math.round(avgDuration),
+            total_modules_read: totalModules,
+            avg_exam_score: Math.round(avgScore),
+            login_frequency: loginFrequency,
+            failed_exams: failedExams
         };
 
+        // 6. AMBIL HASIL PREDIKSI SEBELUMNYA (Jika Ada)
+        const { data: lastInsight } = await supabase
+            .from('user_learning_insights')
+            .select('learning_style, motivation_quote, suggestions')
+            .eq('user_id', userId)
+            .order('generated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        // 7. AMBIL TARGET & HISTORY (Pelengkap Dashboard)
+        const { data: examHistory } = await supabase
+            .from('exam_results')
+            .select('score, is_passed, created_at, exam_registrations!inner(examinees_id, tutorial_id)')
+            .eq('exam_registrations.examinees_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(3);
+
+        // RESPONSE JSON
         res.json({
             success: true,
-            data: responseData
+            data: {
+                user: {
+                    name: user?.name || 'User',
+                    xp: user?.xp || 0,
+                    avatar: user?.image_path
+                },
+                // INI YANG AKAN DIPAKAI TENSORFLOW.JS DI FRONTEND
+                ml_features: mlFeatures, 
+                
+                ai_insight: {
+                    type: lastInsight?.learning_style || "Menunggu Analisis...",
+                    motivation: lastInsight?.motivation_quote || "Silakan klik tombol 'Analisis' di dashboard.",
+                    advice: lastInsight?.suggestions?.[0] || "Belum ada saran."
+                },
+                exam_history: examHistory || []
+            }
         });
 
     } catch (err) {
-        console.error("Dashboard Manual Error:", err.message);
+        console.error("Dashboard Error:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 };
