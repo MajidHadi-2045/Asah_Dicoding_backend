@@ -6,8 +6,14 @@ const dashboardController = require('../controllers/dashboardController');
 const insightController = require('../controllers/insightController'); 
 const authMiddleware = require('../middleware/authMiddleware');
 
+// Route Login
 router.post('/login', authController.login);
+
+// Route Dashboard (Ambil Data)
 router.get('/dashboard', authMiddleware, dashboardController.getDashboardData);
-router.post('/insight', authMiddleware, insightController.saveInsight); 
+
+// Route AI (Backend yang mikir/predict)
+// Frontend cukup panggil POST ini, tidak perlu kirim data apa-apa selain Token.
+router.post('/predict', authMiddleware, insightController.generatePrediction); 
 
 module.exports = router;
