@@ -9,6 +9,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 // Route Login
 router.post('/login', authController.login);
+router.post('/register', authController.register);
 
 // Route Dashboard (Ambil Data)
 router.get('/dashboard', authMiddleware, dashboardController.getDashboardData);

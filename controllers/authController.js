@@ -65,3 +65,65 @@ exports.login = async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 };
+
+exports.register = async (req, res) => {
+    // User CUKUP kirim Email dan Password saja
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ success: false, message: "Email dan Password wajib diisi." });
+    }
+
+    try {
+        console.log(`📝 Mencoba aktivasi akun untuk: ${email}`);
+
+        // LANGKAH 1: Cek apakah Email ini ada di Database Excel?
+        // (Kita menolak orang asing yang tidak terdaftar di Excel)
+        const { data: existingUser, error: checkError } = await supabase
+            .from('users')
+            .select('id, uuid, email')
+            .eq('email', email)
+            .maybeSingle();
+
+        // Jika email tidak ditemukan di tabel users
+        if (!existingUser) {
+            return res.status(403).json({ 
+                success: false, 
+                message: "Email Anda tidak terdaftar sebagai Peserta/Siswa. Hubungi Admin." 
+            });
+        }
+
+        // LANGKAH 2: Cek apakah dia sudah pernah daftar sebelumnya?
+        // (Kalau kolom UUID sudah terisi, berarti akun sudah aktif)
+        if (existingUser.uuid) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "Akun ini sudah aktif sebelumnya. Silakan langsung Login." 
+            });
+        }
+
+        // LANGKAH 3: Daftarkan ke Supabase Auth (Buat Password)
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+            email: email,
+            password: password,
+            // Kita tidak perlu simpan nama di metadata, karena nama asli ada di tabel public.users
+        });
+
+        if (authError) {
+            return res.status(400).json({ success: false, message: authError.message });
+        }
+
+        // SUKSES!
+        // Catatan: Trigger SQL yang sudah kita pasang sebelumnya akan otomatis
+        // menempelkan UUID baru ke tabel 'users' di background.
+        
+        res.json({
+            success: true,
+            message: "Aktivasi Berhasil! Silakan Login dengan password baru Anda.",
+        });
+
+    } catch (err) {
+        console.error("Register Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
