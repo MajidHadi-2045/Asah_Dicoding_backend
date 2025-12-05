@@ -127,3 +127,58 @@ exports.register = async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 };
+
+// 1. KIRIM EMAIL RESET
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body;
+    
+    // Ganti URL ini dengan Link Frontend Vercel kamu (Halaman tempat input password baru)
+    const RESET_PAGE_URL = 'https://smartlearn-frontend.vercel.app/reset-password.html'; 
+
+    try {
+        console.log(`📧 Mengirim link reset password ke: ${email}`);
+
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: RESET_PAGE_URL,
+        });
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            message: "Link reset password telah dikirim ke email Anda. Cek Inbox/Spam.",
+        });
+
+    } catch (err) {
+        console.error("Forgot Pass Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+// 2. SIMPAN PASSWORD BARU
+// (Fungsi ini hanya bisa dipanggil jika user punya Token dari link email)
+exports.updatePassword = async (req, res) => {
+    const { new_password } = req.body;
+
+    try {
+        if (!new_password) return res.status(400).json({ success: false, message: "Password baru wajib diisi." });
+
+        console.log(`🔐 Mengupdate password untuk User ID: ${req.user.id}`);
+
+        // Update password di Supabase Auth
+        const { error } = await supabase.auth.updateUser({ 
+            password: new_password 
+        });
+
+        if (error) throw error;
+
+        res.json({
+            success: true,
+            message: "Password berhasil diubah! Silakan login kembali.",
+        });
+
+    } catch (err) {
+        console.error("Update Pass Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+};

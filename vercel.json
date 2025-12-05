@@ -11,5 +11,11 @@
       "src": "/(.*)",
       "dest": "index.js"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/weekly-email",
+      "schedule": "0 9 * * 1" 
+    }
   ]
 }
