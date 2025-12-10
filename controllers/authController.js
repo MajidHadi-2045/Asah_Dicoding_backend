@@ -1,4 +1,6 @@
 const supabase = require('../config/supabase');
+// 👇 Tambahan PENTING: Import createClient untuk fitur Update Password
+const { createClient } = require('@supabase/supabase-js');
 
 exports.login = async (req, res) => {
     const { email, password } = req.body;
@@ -29,10 +31,9 @@ exports.login = async (req, res) => {
         }
 
         // 2. Jika Password benar, cari data profil lengkap di tabel 'users'
-        // Kita butuh ID Integer (misal: 96989) untuk request ke dashboard nanti
         const { data: userData, error: userError } = await supabase
             .from('users')
-            .select('*') // Ambil semua kolom (nama, role, xp, dll)
+            .select('*') 
             .eq('email', email)
             .single();
 
@@ -50,10 +51,10 @@ exports.login = async (req, res) => {
         res.json({
             success: true,
             message: "Login Berhasil!",
-            token: authData.session.access_token, // Token rahasia (Bearer)
+            token: authData.session.access_token, 
             user: {
-                id: userData.id,       // ID Integer (PENTING)
-                uuid: userData.uuid,   // ID Auth
+                id: userData.id,       
+                uuid: userData.uuid,   
                 name: userData.name,
                 email: userData.email,
                 role: userData.user_role
@@ -67,7 +68,6 @@ exports.login = async (req, res) => {
 };
 
 exports.register = async (req, res) => {
-    // User CUKUP kirim Email dan Password saja
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -78,7 +78,6 @@ exports.register = async (req, res) => {
         console.log(`📝 Mencoba aktivasi akun untuk: ${email}`);
 
         // LANGKAH 1: Cek apakah Email ini ada di Database Excel?
-        // (Kita menolak orang asing yang tidak terdaftar di Excel)
         const { data: existingUser, error: checkError } = await supabase
             .from('users')
             .select('id, uuid, email')
@@ -94,7 +93,6 @@ exports.register = async (req, res) => {
         }
 
         // LANGKAH 2: Cek apakah dia sudah pernah daftar sebelumnya?
-        // (Kalau kolom UUID sudah terisi, berarti akun sudah aktif)
         if (existingUser.uuid) {
             return res.status(400).json({ 
                 success: false, 
@@ -102,20 +100,15 @@ exports.register = async (req, res) => {
             });
         }
 
-        // LANGKAH 3: Daftarkan ke Supabase Auth (Buat Password)
+        // LANGKAH 3: Daftarkan ke Supabase Auth
         const { data: authData, error: authError } = await supabase.auth.signUp({
             email: email,
             password: password,
-            // Kita tidak perlu simpan nama di metadata, karena nama asli ada di tabel public.users
         });
 
         if (authError) {
             return res.status(400).json({ success: false, message: authError.message });
         }
-
-        // SUKSES!
-        // Catatan: Trigger SQL yang sudah kita pasang sebelumnya akan otomatis
-        // menempelkan UUID baru ke tabel 'users' di background.
         
         res.json({
             success: true,
@@ -132,7 +125,7 @@ exports.register = async (req, res) => {
 exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
     
-    // Ganti URL ini dengan Link Frontend Vercel kamu (Halaman tempat input password baru)
+    // URL Frontend Clean URL (Tanpa .html)
     const RESET_PAGE_URL = 'https://smartlearn-frontend.vercel.app/reset-password'; 
 
     try {
@@ -155,18 +148,34 @@ exports.forgotPassword = async (req, res) => {
     }
 };
 
-// 2. SIMPAN PASSWORD BARU
-// (Fungsi ini hanya bisa dipanggil jika user punya Token dari link email)
+// 2. SIMPAN PASSWORD BARU (VERSI PERBAIKAN)
 exports.updatePassword = async (req, res) => {
     const { new_password } = req.body;
+    
+    // Ambil Token User dari Header yang dikirim Frontend
+    const userToken = req.headers.authorization; 
+
+    if (!new_password) return res.status(400).json({ success: false, message: "Password baru wajib diisi." });
+    if (!userToken) return res.status(401).json({ success: false, message: "Token tidak ditemukan." });
 
     try {
-        if (!new_password) return res.status(400).json({ success: false, message: "Password baru wajib diisi." });
+        console.log(`🔐 Mengupdate password user...`);
 
-        console.log(`🔐 Mengupdate password untuk User ID: ${req.user.id}`);
+        // --- TRIK PENTING DI SINI ---
+        // Kita buat Client Sementara khusus untuk user ini menggunakan Token dia.
+        // Ini supaya Supabase tahu "Siapa" yang sedang ganti password.
+        const supabaseUser = createClient(
+            process.env.SUPABASE_URL, 
+            process.env.SUPABASE_KEY, 
+            {
+                global: {
+                    headers: { Authorization: userToken } // Token ditempel disini
+                }
+            }
+        );
 
-        // Update password di Supabase Auth
-        const { error } = await supabase.auth.updateUser({ 
+        // Update password menggunakan client sementara tadi
+        const { error } = await supabaseUser.auth.updateUser({ 
             password: new_password 
         });
 
