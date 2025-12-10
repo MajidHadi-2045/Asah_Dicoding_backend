@@ -133,7 +133,7 @@ exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
     
     // Ganti URL ini dengan Link Frontend Vercel kamu (Halaman tempat input password baru)
-    const RESET_PAGE_URL = 'https://smartlearn-frontend.vercel.app/reset-password.html'; 
+    const RESET_PAGE_URL = 'https://smartlearn-frontend.vercel.app/reset-password'; 
 
     try {
         console.log(`📧 Mengirim link reset password ke: ${email}`);
