@@ -7,6 +7,7 @@ const insightController = require('../controllers/insightController');
 const targetController = require('../controllers/targetController'); 
 const authMiddleware = require('../middleware/authMiddleware');
 const emailController = require('../controllers/emailController');
+const userController = require('../controllers/userController');
 
 // === 1. PUBLIC ROUTES (Tanpa Login) ===
 router.post('/login', authController.login);
@@ -15,7 +16,8 @@ router.post('/forgot-password', authController.forgotPassword);
 
 // === 2. PROTECTED ROUTES (Butuh Token) ===
 // Route Update Password (HARUS DIPISAH DI SINI)
-router.post('/update-password', authMiddleware, authController.updatePassword); 
+router.post('/update-password', authMiddleware, authController.updatePassword);
+router.post('/set-target', authMiddleware, userController.updateLearningTarget); 
 
 // Route Dashboard
 router.get('/dashboard', authMiddleware, dashboardController.getDashboardData);
