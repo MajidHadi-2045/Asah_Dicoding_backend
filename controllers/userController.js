@@ -1,9 +1,8 @@
-// controllers/userController.js (atau gabung di dashboardController)
 const supabase = require('../config/supabase');
 
 exports.updateLearningTarget = async (req, res) => {
-    const authId = req.user?.id; // UUID dari Token
-    const { target_minutes } = req.body; // Input dari Frontend (misal: 60)
+    const authId = req.user?.id; 
+    const { target_minutes } = req.body; 
 
     // 1. Validasi Input
     if (!authId) return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -12,39 +11,70 @@ exports.updateLearningTarget = async (req, res) => {
     }
 
     try {
-        console.log(`🎯 Update Target untuk UUID: ${authId} -> ${target_minutes} Menit`);
+        console.log(`🎯 Update Target Request: ${authId} -> ${target_minutes} Menit`);
 
-        // 2. Cari ID Integer User dulu (Karena tabel learning_targets butuh user_id integer)
-        const { data: user, error: userError } = await supabase
-            .from('users')
-            .select('id')
-            .eq('uuid', authId)
-            .single();
+        // 2. Cari User ID (Logika Hybrid)
+        let query = supabase.from('users').select('id');
+        const isUuidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(authId);
+
+        if (isUuidFormat) query = query.eq('uuid', authId);
+        else query = query.eq('id', authId);
+
+        const { data: user, error: userError } = await query.single();
 
         if (userError || !user) {
             return res.status(404).json({ success: false, message: "User tidak ditemukan." });
         }
 
-        const userId = user.id; // Ini ID Integer (misal: 531259)
+        const userId = user.id;
 
-        // 3. Simpan Target ke Database
-        // Kita gunakan 'upsert': Kalau ada update, kalau gak ada insert.
-        // Asumsi: Satu user cuma punya satu target aktif tipe 'study_duration'
+        // ============================================================
+        // 3. LOGIKA BARU: CEK MANUAL (MENGHINDARI ERROR CONSTRAINT)
+        // ============================================================
         
-        const { data, error } = await supabase
+        // A. Cek dulu apakah target sudah ada?
+        const { data: existingTarget } = await supabase
             .from('learning_targets')
-            .upsert({ 
-                user_id: userId,
-                target_value: target_minutes,
-                target_type: 'study_duration',
-                status: 'active',
-                updated_at: new Date() // Pastikan ada kolom ini atau hapus jika tidak ada
-            }, { 
-                onConflict: 'user_id, target_type' // Kunci agar tidak duplikat
-            })
-            .select();
+            .select('id')
+            .eq('user_id', userId)
+            .eq('target_type', 'study_duration')
+            .maybeSingle();
 
-        if (error) throw error;
+        let resultData;
+
+        if (existingTarget) {
+            // B. Jika ADA -> Lakukan UPDATE
+            console.log("🔄 Data ditemukan, melakukan UPDATE...");
+            const { data, error } = await supabase
+                .from('learning_targets')
+                .update({ 
+                    target_value: parseInt(target_minutes),
+                    start_date: new Date(), // Update tanggal mulai
+                    status: 'active'
+                })
+                .eq('id', existingTarget.id) // Update berdasarkan ID yang ditemukan
+                .select();
+            
+            if (error) throw error;
+            resultData = data;
+
+        } else {
+            // C. Jika TIDAK ADA -> Lakukan INSERT
+            console.log("➕ Data baru, melakukan INSERT...");
+            const { data, error } = await supabase
+                .from('learning_targets')
+                .insert({ 
+                    user_id: userId,
+                    target_value: parseInt(target_minutes),
+                    target_type: 'study_duration',
+                    status: 'active',
+                    start_date: new Date()
+                })
+                .select();
+
+            if (error) throw error;
+            resultData = data;
+        }
 
         res.json({
             success: true,
