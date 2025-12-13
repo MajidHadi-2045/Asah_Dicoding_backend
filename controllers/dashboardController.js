@@ -1,6 +1,6 @@
 const supabase = require('../config/supabase');
 
-// --- HELPER FUNCTION: Format Menit ke Jam/Menit ---
+// --- HELPER 1: Format Menit ke Jam/Menit ---
 const formatDuration = (minutes) => {
     const num = Number(minutes) || 0;
     if (num >= 60) {
@@ -8,6 +8,27 @@ const formatDuration = (minutes) => {
         return `${hours} Jam`;
     }
     return `${num} Menit`;
+};
+
+// --- HELPER 2: Generate Deskripsi Berdasarkan Tipe Belajar ---
+const getLearningDescription = (type) => {
+    if (!type) return "Data aktivitas belum cukup untuk analisis mendalam.";
+    
+    const t = String(type).toLowerCase();
+    
+    if (t.includes('struggling')) {
+        return "Terdeteksi adanya kendala pada pemahaman materi dasar. Konsistensi diperlukan.";
+    } else if (t.includes('consistent')) {
+        return "Hebat! Pola belajarmu sangat teratur. Data tracking menunjukkan kamu mengakses materi secara rutin setiap hari.";
+    } else if (t.includes('fast') || t.includes('ambitious')) {
+        return "Luar biasa! Kecepatan penyelesaian modulmu di atas rata-rata. Kamu memiliki daya tangkap yang cepat.";
+    } else if (t.includes('high achiever') || t.includes('expert')) {
+        return "Performa sempurna! Nilai submission dan ujianmu menunjukkan penguasaan materi yang sangat mendalam.";
+    } else if (t.includes('procrastinator') || t.includes('deadliner')) {
+        return "Pola belajar cenderung menumpuk di akhir waktu. Disarankan membagi waktu belajar lebih merata.";
+    } else {
+        return "Pola belajarmu unik dan sedang dianalisis lebih lanjut oleh sistem kami.";
+    }
 };
 
 // ==========================================
@@ -24,33 +45,32 @@ exports.getDashboardData = async (req, res) => {
     }
 
     try {
-        // --- A. AMBIL DATA USER (LOGIKA HYBRID UUID/INT) ---
+        // --- A. AMBIL DATA USER (LOGIKA HYBRID) ---
         let query = supabase.from('users').select('*');
         const isUuidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(authId);
 
-        if (isUuidFormat) {
-            query = query.eq('uuid', authId);
-        } else {
-            query = query.eq('id', authId);
-        }
+        if (isUuidFormat) query = query.eq('uuid', authId);
+        else query = query.eq('id', authId);
 
         let { data: user, error: userError } = await query.maybeSingle();
 
         if (userError) console.error("❌ DB Error saat cari User:", userError.message);
 
-        // Fallback jika user tidak ketemu
+        // Fallback user dummy
         if (!user) {
             console.warn("⚠️ User tidak ketemu. Pakai Dummy.");
             user = {
                 id: isUuidFormat ? 0 : authId,
                 name: "Guest User",
-                xp: 0,
-                uuid: null,
-                image_path: null
+                image_path: null,
+                student_id: "ID-???",
+                university: "-",
+                major: "-",
+                mentor: "-"
             };
         }
 
-        const userId = user.id; // ID Integer untuk relasi
+        const userId = user.id;
 
         // Fix Avatar
         let avatarUrl = user?.image_path;
@@ -59,7 +79,22 @@ exports.getDashboardData = async (req, res) => {
             avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(safeName)}&background=0D8ABC&color=fff`;
         }
 
-        // --- B. DATA SUBMISSION TERAKHIR ---
+        // --- B. HITUNG TOTAL XP ---
+        const { data: xpData } = await supabase
+            .from('developer_journey_completions')
+            .select(`developer_journeys ( xp )`)
+            .eq('user_id', userId);
+
+        let totalXp = 0;
+        if (xpData) {
+            xpData.forEach(item => {
+                if (item.developer_journeys && item.developer_journeys.xp) {
+                    totalXp += Number(item.developer_journeys.xp);
+                }
+            });
+        }
+
+        // --- C. DATA SUBMISSION TERAKHIR ---
         const { data: lastSub } = await supabase
             .from('developer_journey_submissions')
             .select(`rating, note, reviewer_id, created_at, developer_journeys ( name )`)
@@ -75,7 +110,7 @@ exports.getDashboardData = async (req, res) => {
             status: (lastSub.rating >= 3) ? "Lulus (Passed)" : "Perlu Revisi"
         } : null;
 
-        // --- C. HITUNG STATISTIK ---
+        // --- D. HITUNG STATISTIK ---
         
         // 1. Durasi
         const { data: completions } = await supabase
@@ -114,7 +149,7 @@ exports.getDashboardData = async (req, res) => {
         }
         const avgScore = examCount > 0 ? (totalScore / examCount) : 0;
 
-        // --- D. DATA PENDUKUNG ---
+        // --- E. DATA PENDUKUNG UI ---
 
         // 1. Active Course
         const { data: lastActivity } = await supabase
@@ -145,7 +180,7 @@ exports.getDashboardData = async (req, res) => {
             };
         }
 
-        // 2. Learning Target (Ambil dari DB)
+        // 2. Learning Target
         const { data: target } = await supabase
             .from('learning_targets')
             .select('*')
@@ -156,7 +191,7 @@ exports.getDashboardData = async (req, res) => {
             .maybeSingle();
 
         const currentVal = Math.round(avgDuration);
-        const maxVal = target?.target_value || 60; // Default 60 jika belum set target
+        const maxVal = target?.target_value || 60;
 
         const learningTarget = {
             current: currentVal, 
@@ -168,7 +203,7 @@ exports.getDashboardData = async (req, res) => {
             message: targetMessage 
         };
 
-        // 3. Insight AI
+        // 3. Insight AI (Data Asli DB)
         const { data: lastInsight } = await supabase
             .from('user_learning_insights')
             .select('learning_style, motivation_quote, suggestions')
@@ -177,6 +212,10 @@ exports.getDashboardData = async (req, res) => {
             .limit(1)
             .maybeSingle();
 
+        // Proses Tipe & Deskripsi
+        const insightType = lastInsight?.learning_style || "Menunggu Analisis...";
+        const insightDescription = getLearningDescription(insightType);
+
         // 4. Rekomendasi
         const recommendation = {
             next_class: "Menjadi Android Developer Expert",
@@ -184,13 +223,13 @@ exports.getDashboardData = async (req, res) => {
             reason: avgScore > 80 ? "Karena nilai ujianmu sangat bagus!" : "Lanjutan dari kelas saat ini."
         };
 
-        // --- E. RESPONSE JSON ---
+        // --- F. RESPONSE FINAL ---
         res.json({
             success: true,
             data: {
                 user: {
                     name: user.name,
-                    xp: user.xp,
+                    xp: totalXp, 
                     avatar: avatarUrl,
                     student_id: user.student_id || "R248D5Y0905", 
                     university: user.university || "Universitas Lampung", 
@@ -204,11 +243,20 @@ exports.getDashboardData = async (req, res) => {
                     login_frequency: loginFrequency,
                     failed_exams: failedExams
                 },
+                
+                // 👇 KEY 1: Learner Profile (Tipe + Deskripsi)
+                learner_profile: {
+                    type: insightType,
+                    description: insightDescription
+                },
+
+                // 👇 KEY 2: AI Insight (Tipe + Motivasi + Saran)
                 ai_insight: {
-                    type: lastInsight?.learning_style || "Menunggu Analisis...",
+                    type: insightType, // Ditambahkan kembali sesuai request
                     motivation: lastInsight?.motivation_quote || "Silakan klik tombol 'Analisis' di dashboard.",
                     advice: lastInsight?.suggestions?.[0] || "Belum ada saran."
                 },
+
                 last_submission: lastSubmissionData,
                 active_course: activeCourse,
                 learning_target: learningTarget,
@@ -227,12 +275,8 @@ exports.getDashboardData = async (req, res) => {
 // 2. SET LEARNING TARGET (WRITE)
 // ==========================================
 exports.setLearningTarget = async (req, res) => {
-    const authId = req.user?.id; // UUID dari Token
-    const { target_minutes } = req.body; // Input dari Frontend
-
-    console.log("\n================ SET TARGET REQUEST ================");
-    console.log("🔑 ID Token:", authId);
-    console.log("🎯 Target Baru:", target_minutes);
+    const authId = req.user?.id; 
+    const { target_minutes } = req.body; 
 
     if (!authId) return res.status(401).json({ success: false, message: "Unauthorized" });
     if (!target_minutes || isNaN(target_minutes)) {
@@ -240,7 +284,8 @@ exports.setLearningTarget = async (req, res) => {
     }
 
     try {
-        // 1. Cari ID Integer User (Logic Hybrid seperti di atas)
+        console.log(`🎯 Update Target Request: ${authId} -> ${target_minutes} Menit`);
+
         let query = supabase.from('users').select('id');
         const isUuidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(authId);
 
@@ -250,31 +295,55 @@ exports.setLearningTarget = async (req, res) => {
         const { data: user, error: userError } = await query.single();
 
         if (userError || !user) {
-            return res.status(404).json({ success: false, message: "User profile not found." });
+            return res.status(404).json({ success: false, message: "User tidak ditemukan." });
         }
 
         const userId = user.id;
 
-        // 2. Upsert Target (Update kalau ada, Insert kalau belum)
-        const { data, error } = await supabase
+        // Manual Check Upsert
+        const { data: existingTarget } = await supabase
             .from('learning_targets')
-            .upsert({ 
-                user_id: userId,
-                target_value: parseInt(target_minutes),
-                target_type: 'study_duration',
-                status: 'active',
-                updated_at: new Date()
-            }, { 
-                onConflict: 'user_id, target_type' // Kunci unique constraint
-            })
-            .select();
+            .select('id')
+            .eq('user_id', userId)
+            .eq('target_type', 'study_duration')
+            .maybeSingle();
 
-        if (error) throw error;
+        let resultData;
+
+        if (existingTarget) {
+            const { data, error } = await supabase
+                .from('learning_targets')
+                .update({ 
+                    target_value: parseInt(target_minutes),
+                    status: 'active',
+                    start_date: new Date()
+                })
+                .eq('id', existingTarget.id)
+                .select();
+            if (error) throw error;
+            resultData = data;
+        } else {
+            const { data, error } = await supabase
+                .from('learning_targets')
+                .insert({ 
+                    user_id: userId,
+                    target_value: parseInt(target_minutes),
+                    target_type: 'study_duration',
+                    status: 'active',
+                    start_date: new Date()
+                })
+                .select();
+            if (error) throw error;
+            resultData = data;
+        }
 
         res.json({
             success: true,
             message: "Target belajar berhasil diperbarui!",
-            data: data
+            data: {
+                target_minutes: target_minutes,
+                display: `${(target_minutes / 60).toFixed(1)} Jam`
+            }
         });
 
     } catch (err) {
