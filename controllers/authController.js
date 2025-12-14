@@ -125,8 +125,8 @@ exports.register = async (req, res) => {
 exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
     
-    // URL Frontend Clean URL (Tanpa .html)
-    const RESET_PAGE_URL = 'https://smartlearn-frontend.vercel.app/reset-password'; 
+    // URL Frontend
+    const RESET_PAGE_URL = 'https://capstone-learning-insight.netlify.app/reset-password'; 
 
     try {
         console.log(`📧 Mengirim link reset password ke: ${email}`);
